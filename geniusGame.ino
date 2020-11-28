@@ -1,38 +1,48 @@
+// Author: Ayslenon - 2019
+// Game genius running on atmega328p 
+
+//=============================================================================================================
+// libs includes
+//=============================================================================================================
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
 
-int numero_de_rounds = 4;
 
-int ovf0 = 0, nivel_de_dificuldade = 0, botao_apertado = 0, pisca = 0, tempo_leitura = 0, paradinha = 0;
+//=============================================================================================================
+// creating variables
+//=============================================================================================================
 
-boolean gameover = false, answer = false, timeout = false, tempo_de_piscar = false, eh_pra_piscar = false,
-        flagbotao1 = false, flagbotao2 = false, flagbotao3 = false, flagbotao4 = false, para_um_pouqim = false;
+int max_rounds = 4; 
+
+int ovf0 = 0, difficulty_level = 0, pressed_button = 0, read_time = 0;
+
+boolean gameover = false, answered = false, timeout = false,
+        flagbutton1 = false, flagbutton2 = false, flagbutton3 = false, flagbutton4 = false;
 
 
+//=============================================================================================================
+// declaring functions
+//=============================================================================================================
+
+// function to initialize timer 0 (8bit timer)
 void timers_ini(void) {
-  TCCR0B |=   0x05;  //frequencia em 16 MHz/1024 -> ciclo de maquina: 1024/16 MHz = 64 us
-  TCNT0   =   0x00;  //consegue contar 2^8  -> 256   vezes
-  TIMSK0 |=   0x01;  //habilita a flag de aviso de overflow
-  ovf0    =      0;  //zera a variável de contagem de estouros para o timer 0
-  sei();             //habilita a chave global dos timers
+  TCCR0B |=   0x05;  //frequency divided by 1024 -> machine cicle: 1024/16 MHz = 64 us
+  TCNT0   =   0x00;  //starts tnct counter on 0, it counts until 255
+  TIMSK0 |=   0x01;  //discover timer mask interruption
+  ovf0    =      0;  //variable that stores number of overflows counted
+  sei();             //enable global interrupt key
 }
 
-void PWMpin11(uint16_t valor) {
-  OCR2B = valor;                                          // Configurar o modo de compracao (ativar o PWM)
-  TCCR2A |= (1 << COM2B1);                                // Set modo clear
-  TCCR2A |= (1 << WGM21) | (1 << WGM20);                  // Configura a forma de onda para o modo Fast PWM
-  TCCR2B |= (1 << CS21);                                  // Configura Prescale (divide o clock por 8)
-}
-
-
+// initialize adc and starts the first conversion
 void ADC_init (void)
 {
   ADCSRA |= (1 << ADEN) | (1 << ADSC) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
   ADMUX |= (1 << REFS0);
 }
 
-uint16_t ADC_read_LDR(void) // canal 0
+// start a new conversion on channel 0, waits until its done and then returns
+uint16_t ADC_read_LDR(void)
 {
   ADMUX &= 0xF0;
   ADMUX |= 0x00;
@@ -41,7 +51,8 @@ uint16_t ADC_read_LDR(void) // canal 0
   return ADCW;
 }
 
-uint16_t ADC_read_POT (void) // canal 1
+// start a new conversion on channel 0, waits until its done and then returns
+uint16_t ADC_read_POT (void)
 {
   ADMUX &= 0xF0;
   ADMUX |= 0x01;
@@ -50,7 +61,8 @@ uint16_t ADC_read_POT (void) // canal 1
   return ADCW;
 }
 
-void som_de_urna (void) {
+// make a brazilian electronic urn sound via buzzer
+void urn_sound (void) {
   _delay_ms (300);
   int buzzer = 3;
   for (int j = 0; j < 4; j ++) {
@@ -64,106 +76,93 @@ void som_de_urna (void) {
   noTone (buzzer);
 }
 
-
+// function to treat interruptions from timer 0 overflows
 ISR (TIMER0_OVF_vect) {
-  // 1 segundo /((1024 prescaler *256 counter)/16MHz) ~= 61.03515 estouros para 1s
-  // para 1 ms -> 0.061 contagens. e multiplicando por 177+niveldedificuldade ms teremos a quantidade de estouros necessarios
-  if (eh_pra_piscar) {
-    pisca ++;
-    if (pisca >= (144 + nivel_de_dificuldade) * 0.03) {
-      tempo_de_piscar = false;
-      pisca = 0;
-      PORTD = 0x00;
-    }
-  }
-  else pisca = 0;
-
+  // time between 2 interrupts is aproximately 16.4 ms (1024*256/16MHz)
+  // if a new game didnt start yet we can increase or decrease the number of rounds by pressing button 1 or button 2
   if (gameover) {
-    if ((PINB & 0x01) && (!flagbotao1)) {
-      flagbotao1 = true;
+    if ((PINB & 0x01) && (!flagbutton1)) {
+      flagbutton1 = true;
     }
-    else if ((PINB & 0x02) && (!flagbotao2)) {
-      flagbotao2 = true;
+    else if ((PINB & 0x02) && (!flagbutton2)) {
+      flagbutton2 = true;
     }
   }
 
-  if ((gameover) && (tempo_leitura > 5)) {
-    if ((!(PINB & 0x01)) && (flagbotao1)) {
-      numero_de_rounds ++;
-      Serial.println(numero_de_rounds);
-      tempo_leitura = 0;
-      flagbotao1 = false;
+  // to avoid bouncing, we wait 5 overflows after press button1 or button2
+  // its aproximately 82ms
+  // when the button is released the max_rounds increases or descreases 
+  if ((gameover) && (read_time > 5)) {
+    if ((!(PINB & 0x01)) && (flagbutton1)) {
+      max_rounds ++;
+      Serial.println(max_rounds);
+      read_time = 0;
+      flagbutton1 = false;
     }
-    else if ((!(PINB & 0x02)) && (flagbotao2)) {
-      numero_de_rounds--;
-      Serial.println(numero_de_rounds);
-      if (numero_de_rounds == 0) {
-        numero_de_rounds = 255;
+    else if ((!(PINB & 0x02)) && (flagbutton2)) {
+      max_rounds--;
+      Serial.println(max_rounds);
+      if (max_rounds == 0) {
+        max_rounds = 255;
       }
-      tempo_leitura = 0;
-      flagbotao2 = false;
+      read_time = 0;
+      flagbutton2 = false;
     }
   }
 
-  if (para_um_pouqim) {
-    paradinha++;
-    if (paradinha >= 3) {
-      para_um_pouqim = false;
-      paradinha = 0;
+  // if a new game started, and the player have to respond the sequence this part will execute
+  if ((!timeout) && (!answered) && (read_time == 0)) {
+    if ((PINB & 0x01) && (!flagbutton1)) {
+      flagbutton1 = true;
     }
-  }
-  else paradinha = 0;
-
-  if ((!timeout) && (!answer) && (tempo_leitura == 0)) {
-    if ((PINB & 0x01) && (!flagbotao1)) {
-      flagbotao1 = true;
+    else if ((PINB & 0x02) && (!flagbutton2)) {
+      flagbutton2 = true;
     }
-    else if ((PINB & 0x02) && (!flagbotao2)) {
-      flagbotao2 = true;
+    else if ((PINB & 0x04) && (!flagbutton3)) {
+      flagbutton3 = true;
     }
-    else if ((PINB & 0x04) && (!flagbotao3)) {
-      flagbotao3 = true;
-    }
-    else if ((PINB & 0x08) && (!flagbotao4)) {
-      flagbotao4 = true;
+    else if ((PINB & 0x08) && (!flagbutton4)) {
+      flagbutton4 = true;
     }
   }
 
-  if ((flagbotao1) || (flagbotao2) || (flagbotao3) || (flagbotao4)) {
-    tempo_leitura++;
+  // here is the counter for avoid bouncing
+  if ((flagbutton1) || (flagbutton2) || (flagbutton3) || (flagbutton4)) {
+    read_time++;
   }
 
-
-  if ((!timeout) && (!answer) && (tempo_leitura > 5)) {
-    if ((!(PINB & 0x01)) && (flagbotao1)) {
-      botao_apertado = 1;
-      answer = true;
-      tempo_leitura = 0;
-      flagbotao1 = false;
+  // after 82ms and the player release the button, the pressed button is 'returned'
+  if ((!timeout) && (!answered) && (read_time > 5)) {
+    if ((!(PINB & 0x01)) && (flagbutton1)) {
+      pressed_button = 1;
+      answered = true;
+      read_time = 0;
+      flagbutton1 = false;
     }
-    else if ((!(PINB & 0x02)) && (flagbotao2)) {
-      botao_apertado = 2;
-      answer = true;
-      tempo_leitura = 0;
-      flagbotao2 = false;
+    else if ((!(PINB & 0x02)) && (flagbutton2)) {
+      pressed_button = 2;
+      answered = true;
+      read_time = 0;
+      flagbutton2 = false;
     }
-    else if ((!(PINB & 0x04)) && (flagbotao3)) {
-      botao_apertado = 4;
-      answer = true;
-      tempo_leitura = 0;
-      flagbotao3 = false;
+    else if ((!(PINB & 0x04)) && (flagbutton3)) {
+      pressed_button = 4;
+      answered = true;
+      read_time = 0;
+      flagbutton3 = false;
     }
-    else if ((!(PINB & 0x08)) && (flagbotao4)) {
-      botao_apertado = 8;
-      answer = true;
-      tempo_leitura = 0;
-      flagbotao4 = false;
+    else if ((!(PINB & 0x08)) && (flagbutton4)) {
+      pressed_button = 8;
+      answered = true;
+      read_time = 0;
+      flagbutton4 = false;
     }
   }
 
-
-  if (!answer) {
-    ovf0++; // 183 gera uma base de tempo para timeout de aproximadadamente 3 segundos para apertar um botao
+  // if the player didnt answer yet, we start a count, it counts aproximately 3s, the player must answer within this time
+  // if dont, the game ends
+  if (!answered) {
+    ovf0++; 
     if (ovf0 >= 183) {
       timeout = true;
       ovf0 = 0;
@@ -174,90 +173,105 @@ ISR (TIMER0_OVF_vect) {
   }
 }
 
+// main function
 int main () {
   Serial.begin(9600);
   int main_counter = 0;
+  // initialize adc and timers
   ADC_init();
   timers_ini();
+  // setup from all outputs and inputs
+  // output pins are from 4 to 7 for leds, pin3 for buzzer
+  // pin 2 is a input button to start the system
+  // pin 11 is a pwm pin connected to a led
+  // pin 8 from 12 are buttons from responses
+  // pin a0 is a input from ldr, and a1 is input from potentiometer
   DDRD |= 0xF8; // pinos 4 5 6 e 7 sao os leds // pino 3 vai ser o buzzer // pino 2 botao liga
-  DDRB |= 0x80; // pino 11 é o pwm  // pinos 8 9 10 12 serao botoes
+  DDRB |= 0x00; // pinos 8 9 10 12 serao botoes
+  // set all leds to low level
   PORTD = 0;
+
+  // start a infinity loop to run the game 
   while (1) {
+    // start new vectors, with the length of max rounds permmited
+    // sequence shows how the leds will light 
+    int sequence [max_rounds];
+    // response stores the sequence of answers for each round
+    int response  [max_rounds];
 
-    int sequencia [numero_de_rounds];
-    int resposta  [numero_de_rounds];
-
-    nivel_de_dificuldade = ADC_read_POT(); // usar este valor depois
+    
+    difficulty_level = ADC_read_POT(); 
+    
+    // gameover indicate if the game ended (true by default)
     gameover = true;
-    answer = true;
+    // answered indicate if the player answered the actual round
+    answered = true;
+    // timeout indicate if the player didnt answer in the right time
     timeout = true;
 
-    if (PIND & 0x04) { // entrar em novo jogo
+    // if the start button is pressed, a new game starts
+    if (PIND & 0x04) { 
       main_counter = 0;
       gameover = false;
-      for (main_counter; main_counter < numero_de_rounds; main_counter++) {
-        sequencia[main_counter] = 1;
-        int valor_ldr   = ADC_read_LDR();
-        int valor_aleat = (rand() + (rand() / ADC_read_LDR()) + (ADC_read_LDR () / 10)) % 4;
-        for (int aux = 0; aux < valor_aleat; aux++) {
-          sequencia[main_counter] *= 0x02;
-        }
-        for (int i = 0; i <= main_counter; i++) {
-          if (sequencia[i] == 1) PORTD = 0x10;
-          else if (sequencia[i] == 2) PORTD = 0x20;
-          else if (sequencia[i] == 4) PORTD = 0x40;
-          else if (sequencia[i] == 8) PORTD = 0x80;
 
-          eh_pra_piscar = true;
-          tempo_de_piscar = true;
-          while (tempo_de_piscar) {
-            Serial.print("");
-          }
+      // we start a new loop, it indicates the actual round in the game 
+      // in each round the player will press buttons in sequence 
+      // correspondig to the order of leds that were lighted up
+      // if the player miss the sequence, the game ends, or if the player dont press any button
+      for (main_counter; main_counter < max_rounds; main_counter++) {
+        
+        // to discover what led needs to be lighed up, we create a random value
+        // and store on the sequence vector, in the main_counter position
+        
+        int rand_value = (rand() + (rand() / ADC_read_LDR()) + (ADC_read_LDR () / 10)) % 4;
+        sequence[main_counter] = 1 << rand_value;
+
+        // this for loop light the leds correspondig to its sequence  
+        for (int showLevel = 0; showLevel <= main_counter; showLevel++) {
+          if (sequence[showLevel] == 1) PORTD = 0x10;
+          else if (sequence[showLevel] == 2) PORTD = 0x20;
+          else if (sequence[showLevel] == 4) PORTD = 0x40;
+          else if (sequence[showLevel] == 8) PORTD = 0x80;
+          _delay_ms(200 + (difficulty_level - 223)*0.5);
           PORTD = 0x00;
-          para_um_pouqim = true;
-          while (para_um_pouqim) {
-            Serial.print("");
-          }
-          Serial.println("");
-          eh_pra_piscar = false;
+          _delay_ms(50);
         }
-        answer = true; // garante que ovf0 vai zerar antes da proxima contagem
-        for (int o = 0; o <= main_counter; o++) {
+
+        // this command is to reset the answer time
+        answered = true; 
+        
+        // start a new loop for the player answer the sequence 
+        for (int answerLevel = 0; answerLevel <= main_counter; answerLevel++) {
           timeout = false;
-          answer = false; // estou gerando esta linha na isr apos soltar o botao
-          botao_apertado = 0;
-          while (!timeout && !answer) {
+          answered = false; 
+          pressed_button = 0;
+          // this while loop waits until any button is pressed, and if dont, the timeout flag will be seted
+          while (!timeout && !answered) {
             Serial.print("");
           }
-          // colocar delay para separar leituras
           Serial.println("");
-          // configurar o timeout a partir da ISR ( ajustar de acordo com o valor do POT )
-          //usar timeout na ISR para habilitar a espera pelo proximo botao e identificar que botao foi esse
+          // stores the pressed button on the vector response
+          response[answerLevel] = pressed_button;
 
-          resposta[o] = botao_apertado;
-
-          if ((timeout) || ((!timeout) && (sequencia[o] != resposta[o]))) {
-            o = main_counter + 1;
-            main_counter = numero_de_rounds + 1;
+          // if the player didnt answer or choose the wrong led the game ends
+          if ((timeout) || ((!timeout) && (sequence[answerLevel] != response[answerLevel]))) {
+            answerLevel = main_counter + 1;
+            main_counter = max_rounds + 1;
             PORTD = 0x00;
+            // blink all the leds  
             for (int p = 0; p < 6; p ++) {
-              PWMpin11(p * 40);
               PORTD ^= 0xF0;
-              para_um_pouqim = true;
-              while (para_um_pouqim) {
-                Serial.print("");
-              }
-              Serial.println("");
+              _delay_ms(50);
             }
-            PWMpin11(0);
+            
             PORTD = 0x00;
             gameover = true;
             break;
           }
         }
       }
-      PWMpin11(0);
-      if (!gameover) som_de_urna (); // criar a funcao p tocar a urna ao vencer o jogo // botar na ISR os leds para piscarem (!gameover && main_counter >= numero_de_rounds)
+      // if the player win the game, without any problem, play a 'win song'
+      if (!gameover) urn_sound ();
     }
   }
 }

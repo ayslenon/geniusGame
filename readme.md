@@ -7,7 +7,7 @@
 
 ## Overview
 This is a little project made for a class, the main focus is to use some peripheral features of atmega328p uC
-the study about all of register used was made during the previus classes
+the study about all of register used was made during the previus classes.
 This game consists on leds lighting in sequence, and in each round the sequence increases.
 After all leds light in each round, the player needs to response in its corresponding order, pressing buttons
 that represents the leds.
